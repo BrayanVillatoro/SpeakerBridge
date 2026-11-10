@@ -1,0 +1,5 @@
+# per-PC state
+settings.json
+speaker.json
+*.log
+__pycache__/
