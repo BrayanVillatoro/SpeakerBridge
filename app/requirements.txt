@@ -2,3 +2,4 @@ soco
 pyaudiowpatch
 pystray
 pillow
+pycaw

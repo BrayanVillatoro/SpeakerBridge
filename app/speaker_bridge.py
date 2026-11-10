@@ -5,6 +5,7 @@ Whatever Windows plays to the VB-Audio Virtual Cable output device is sent to
 the chosen Sonos speakers. Pick that device in the Windows sound menu and the
 Sonos plays; pick anything else and it is released after an hour of silence.
 The tray icon's menu ticks which Sonos speakers to use and sets their volume.
+The Windows volume (and mute) of that output device is the Sonos volume.
 
 How it works:
   1. Read the cable's audio by WASAPI loopback.
@@ -65,6 +66,8 @@ settings = load_settings()   # {"speakers": [room names], "ips": {room name: las
 speakers = {}          # room name -> soco.SoCo, from the last discovery pass
 zones = []             # the chosen speakers that are online, in name order
 volume = None          # the first one's volume (0-100) as last read or set
+muted = False          # ... and whether it is muted
+volume_lock = threading.Lock()   # held while reading or setting the Sonos volume
 holding_sonos = False  # we started playback and haven't released it yet
 last_play = -1e9       # monotonic time of the last "play" command
 last_volume_check = -1e9
@@ -291,24 +294,82 @@ def toggle_speaker(name):
     refresh_menu()
 
 
-def show_volume(new_volume):
-    """Remember the speaker's volume and refresh the tray menu's tick mark."""
-    global volume
-    if new_volume != volume:
-        volume = new_volume
+def read_volume(speaker):
+    """Note the speaker's volume, in case it was changed elsewhere (such as
+    the Sonos app). The lock keeps a slow read from undoing a newer change."""
+    global volume, muted
+    with volume_lock:
+        new = (speaker.volume, speaker.mute)
+        changed = new != (volume, muted)
+        volume, muted = new
+    if changed:
         refresh_menu()
 
 
-def set_volume(new_volume):
-    if not zones:
-        log("volume not changed: no chosen Sonos speaker is online")
-        return
-    for speaker in zones:
+def set_volume(new_volume, new_muted=None):
+    """Set every chosen speaker's volume, and its mute if given."""
+    global volume, muted
+    with volume_lock:
+        if not zones:
+            log("volume not changed: no chosen Sonos speaker is online")
+            return
+        for speaker in zones:
+            try:
+                speaker.volume = new_volume
+                if new_muted is not None:
+                    speaker.mute = new_muted
+            except Exception as e:
+                log(f"volume change failed on {speaker.player_name}: {e}")
+        volume = new_volume
+        if new_muted is not None:
+            muted = new_muted
+    refresh_menu()
+
+
+def cable_endpoint():
+    """The Windows volume control of the cable's output device, or None."""
+    from pycaw.pycaw import AudioUtilities
+    for dev in AudioUtilities.GetAllDevices():
+        if (dev.FriendlyName and CABLE_NAME.lower() in dev.FriendlyName.lower()
+                and dev.id.startswith("{0.0.0.")   # an output, not a recording device
+                and dev.state.name == "Active"):
+            return dev.EndpointVolume
+    return None
+
+
+def windows_volume_loop():
+    """Keep the Windows volume of the cable device and the Sonos volume the
+    same. Windows' own volume has no effect on the audio we capture, so the
+    Sonos does the actual turning down. A change made in Windows (slider,
+    volume keys, mute) goes to the Sonos; a change made anywhere else (tray
+    menu, Sonos app) moves the Windows slider. On startup the Sonos volume
+    wins, so a slider left at 100% can't make the Sonos blast."""
+    import comtypes
+    comtypes.CoInitialize()
+    endpoint = None
+    seen = None   # the Windows (volume, muted) as last read or set here
+    while True:
+        time.sleep(0.2)
         try:
-            speaker.volume = new_volume
+            if endpoint is None:
+                endpoint = cable_endpoint()
+                if endpoint is None:
+                    time.sleep(5)
+                    continue
+            windows = (round(endpoint.GetMasterVolumeLevelScalar() * 100),
+                       bool(endpoint.GetMute()))
+            sonos = (volume, muted)
+            if seen is not None and windows != seen:
+                set_volume(*windows)
+            elif zones and volume is not None and sonos != windows:
+                endpoint.SetMasterVolumeLevelScalar(volume / 100, None)
+                endpoint.SetMute(muted, None)
+                windows = sonos
+            seen = windows
         except Exception as e:
-            log(f"volume change failed on {speaker.player_name}: {e}")
-    show_volume(new_volume)
+            log(f"Windows volume sync error: {e}")
+            endpoint = seen = None
+            time.sleep(5)
 
 
 def coordinator(speaker):
@@ -374,7 +435,7 @@ def control_loop():
             speaker = active[0]
             if now - last_volume_check > 5:
                 last_volume_check = now
-                show_volume(speaker.volume)
+                read_volume(speaker)
                 if holding_sonos and clients:   # e.g. a speaker was just ticked
                     group_up(active)
             if now - last_sound < 2 and not clients and now - last_play > RETRY_SECONDS:
@@ -446,7 +507,8 @@ def run_tray():
 
     tray = pystray.Icon("SpeakerBridge", img, "Speaker Bridge", Menu(
         MenuItem(speakers_label, Menu(speaker_items)),
-        MenuItem(lambda item: "Volume" if volume is None else f"Volume: {volume}%",
+        MenuItem(lambda item: "Volume" if volume is None
+                 else f"Volume: {volume}%{' (muted)' if muted else ''}",
                  Menu(*[level_item(level) for level in range(100, -1, -10)])),
         Menu.SEPARATOR,
         MenuItem("Quit", quit_app)))
@@ -463,6 +525,7 @@ def main():
     threading.Thread(target=server.serve_forever, daemon=True).start()
     threading.Thread(target=capture_loop, daemon=True).start()
     threading.Thread(target=control_loop, daemon=True).start()
+    threading.Thread(target=windows_volume_loop, daemon=True).start()
     log("started")
     try:
         run_tray()

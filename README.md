@@ -64,8 +64,10 @@ to open it.
   it, and click it again to untick it. You can tick as many as you like, and
   they play together in sync. The first one found is used to begin with, and
   your choice is remembered. Use **Search again** if a speaker is missing.
-- **Volume:** right-click the tray icon > **Volume**. It sets every ticked
-  speaker to the same level.
+- **Volume:** while the cable is the chosen sound output, the Windows volume
+  slider, the volume keys and mute control the Sonos. Changing the volume in
+  the Sonos app or the tray menu (right-click the icon > **Volume**) moves
+  the Windows slider to match. Every ticked speaker is set to the same level.
 - **Quit:** right-click the tray icon > **Quit**.
 
 ## Things to know
