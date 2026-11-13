@@ -108,6 +108,16 @@ $shortcut.WorkingDirectory = $here
 $shortcut.Save()
 Write-Host "Starts at login: yes"
 
+# ... and a Start menu entry, for starting it again after choosing Quit
+$programs = [Environment]::GetFolderPath("Programs")
+$shortcut = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $programs "Speaker Bridge.lnk"))
+$shortcut.TargetPath = $pythonw
+$shortcut.Arguments = "`"$script`""
+$shortcut.WorkingDirectory = $here
+$shortcut.IconLocation = Join-Path $here "speaker_bridge.ico"
+$shortcut.Save()
+Write-Host "Start menu entry: yes"
+
 # 6. (Re)start it now
 Get-CimInstance Win32_Process -Filter "Name like 'python%'" |
     Where-Object { $_.CommandLine -like "*speaker_bridge.py*" } |

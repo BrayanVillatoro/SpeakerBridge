@@ -26,6 +26,28 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+
+def leave_console():
+    """Started with python.exe (double-clicked, or from a command prompt)?
+    Then start again with pythonw.exe, which has no console window, and let
+    this copy end. Otherwise the window stays open and closing it would quit
+    Speaker Bridge. Pass --console to stay in the console."""
+    exe = Path(sys.executable)
+    pythonw = exe.with_name("pythonw.exe")
+    if exe.name.lower() != "python.exe" or "--console" in sys.argv or not pythonw.exists():
+        return
+    import subprocess
+    subprocess.Popen(
+        [str(pythonw), os.path.abspath(__file__), *sys.argv[1:]],
+        cwd=os.path.dirname(os.path.abspath(__file__)),
+        creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    sys.exit(0)
+
+
+if __name__ == "__main__":
+    leave_console()
+
 import soco
 
 # ---- settings ---------------------------------------------------------------
@@ -465,16 +487,58 @@ def quit_app(icon=None, item=None):
     os._exit(0)
 
 
+START_MENU_LINK = (Path(os.environ.get("APPDATA", "")) / "Microsoft" / "Windows"
+                   / "Start Menu" / "Programs" / "Speaker Bridge.lnk")
+
+
+def toggle_start_menu(icon=None, item=None):
+    """Add Speaker Bridge to the Start menu's app list, or take it out again."""
+    try:
+        if START_MENU_LINK.exists():
+            START_MENU_LINK.unlink()
+            log("removed from the Start menu")
+            return
+        import subprocess
+        pythonw = Path(sys.executable).with_name("pythonw.exe")
+        env = dict(os.environ,
+                   SB_LINK=str(START_MENU_LINK),
+                   SB_TARGET=str(pythonw if pythonw.exists() else sys.executable),
+                   SB_SCRIPT=str(Path(__file__).resolve()),
+                   SB_DIR=str(HERE),
+                   SB_ICON=str(HERE / "speaker_bridge.ico"))
+        subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             "$s = (New-Object -ComObject WScript.Shell).CreateShortcut($env:SB_LINK);"
+             "$s.TargetPath = $env:SB_TARGET;"
+             "$s.Arguments = '\"' + $env:SB_SCRIPT + '\"';"
+             "$s.WorkingDirectory = $env:SB_DIR;"
+             "if (Test-Path $env:SB_ICON) { $s.IconLocation = $env:SB_ICON };"
+             "$s.Save()"],
+            env=env, check=True, timeout=30, creationflags=subprocess.CREATE_NO_WINDOW)
+        log("added to the Start menu")
+        if icon:
+            icon.notify("Open Start, type Speaker Bridge, then right-click it "
+                        "and choose Pin to Start.", "Added to the Start menu")
+    except Exception as e:
+        log(f"Start menu shortcut error: {e}")
+
+
 def run_tray():
     global tray
     import pystray
     from pystray import Menu, MenuItem
     from PIL import Image, ImageDraw
-    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-    draw.rounded_rectangle((14, 4, 50, 60), radius=8, fill=(30, 30, 30, 255))
-    draw.ellipse((22, 26, 42, 46), fill=(240, 240, 240, 255))
-    draw.ellipse((28, 11, 36, 19), fill=(240, 240, 240, 255))
+    try:
+        # the same icon the Start menu shortcut uses
+        img = Image.open(HERE / "speaker_bridge.ico")
+        img.load()
+    except Exception:
+        # icon file missing or unreadable: draw a plain speaker instead
+        img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        draw.rounded_rectangle((14, 4, 50, 60), radius=8, fill=(30, 30, 30, 255))
+        draw.ellipse((22, 26, 42, 46), fill=(240, 240, 240, 255))
+        draw.ellipse((28, 11, 36, 19), fill=(240, 240, 240, 255))
 
     def level_item(level):
         return MenuItem(
@@ -506,6 +570,8 @@ def run_tray():
                      lambda icon, item: threading.Thread(target=discover, daemon=True).start())]
 
     tray = pystray.Icon("SpeakerBridge", img, "Speaker Bridge", Menu(
+        MenuItem("Show in Start menu", toggle_start_menu,
+                 checked=lambda item: START_MENU_LINK.exists()),
         MenuItem(speakers_label, Menu(speaker_items)),
         MenuItem(lambda item: "Volume" if volume is None
                  else f"Volume: {volume}%{' (muted)' if muted else ''}",

@@ -69,6 +69,10 @@ to open it.
   the Sonos app or the tray menu (right-click the icon > **Volume**) moves
   the Windows slider to match. Every ticked speaker is set to the same level.
 - **Quit:** right-click the tray icon > **Quit**.
+- **Start it again:** open the Start menu, type **Speaker Bridge** and press
+  Enter. No window opens; the icon comes back in the system tray. To pin it,
+  right-click it in the Start menu > **Pin to Start**. The tray menu's
+  **Show in Start menu** adds or removes that Start menu entry.
 
 ## Things to know
 

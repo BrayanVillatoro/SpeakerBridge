@@ -1,11 +1,13 @@
-# Stops Speaker Bridge and removes its startup shortcut and firewall rule.
+# Stops Speaker Bridge and removes its startup and Start menu shortcuts and firewall rule.
 # Leaves Python, the Python packages and the VB-CABLE driver alone.
 Get-CimInstance Win32_Process -Filter "Name like 'python%'" |
     Where-Object { $_.CommandLine -like "*speaker_bridge.py*" } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 
-$link = Join-Path ([Environment]::GetFolderPath("Startup")) "Speaker Bridge.lnk"
-if (Test-Path $link) { Remove-Item $link }
+foreach ($folder in "Startup", "Programs") {
+    $link = Join-Path ([Environment]::GetFolderPath($folder)) "Speaker Bridge.lnk"
+    if (Test-Path $link) { Remove-Item $link }
+}
 
 if (Get-NetFirewallRule -DisplayName "Speaker Bridge" -ErrorAction SilentlyContinue) {
     Write-Host "Removing the firewall rule (approve the Windows admin prompt)..."
